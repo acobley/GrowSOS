@@ -12,25 +12,29 @@ import requests, json, sys
 from requests.auth import HTTPBasicAuth
 import csv
 from SecretHL import AuthCode
-
-
+import threading
+from time import sleep
+from threading import Lock
+lock = Lock()
+global ThreadCount
 fileCsv = csv.writer(open("GrowTimeSeries.csv", "w"))
 fileCsv.writerow(["Serial","Device","sReadingType", "sActualValue", "sTime"])
-
+AllCsv=csv.writer(open("All.csv", "a"))
+ThreadCount=0
 
 
 
 
 def TimeLine(Serial,Code,BeginTime,EndTime,sObservableProperty):
 
-
+    global ThreadCount
     Device=Code
     Begin=BeginTime
     End=EndTime
     Type=sObservableProperty
 
     url="http://grow-beta-api.hydronet.com/api/service/sos?service=SOS&responseformat=application/JSON&request=getobservation&procedure="+Device+"&Version=2.0.0&ObservedProperty="+Type+"&temporalfilter=phenomenonTime,"+Begin+"/"+End
-    print url
+    print("{0},{1}".format(ThreadCount,url))
     headers = {"Authorization": "Bearer {0}".format(AuthCode)}
     payload = json.dumps({})
 
@@ -38,13 +42,12 @@ def TimeLine(Serial,Code,BeginTime,EndTime,sObservableProperty):
     # exit if status code is not ok
     if response.status_code != 200:
       print("Unexpected response: {0}. Status: {1}. ".format(response.reason, response.status_code))
+      lock.acquire()
+      ThreadCount = ThreadCount-1
+      lock.release()
       return
-
     jResp = response.json()
-
     #print json.dumps(jResp,indent=4,sort_keys=True)
-
-
     contents=jResp["observationData"]
     #print json.dumps(contents, indent=4,sort_keys=True)
 
@@ -56,13 +59,18 @@ def TimeLine(Serial,Code,BeginTime,EndTime,sObservableProperty):
        resultTime=key["OM_Observation"]["resultTime"]
        readingType=observedProperty["nilReason"]
        sReadingType=readingType.encode('ascii','ignore')
-
+       iDot= sReadingType.rfind(".")+1
+       oDot= slice(iDot,len(sReadingType),1)
+       ReadingType=sReadingType[oDot]
        ActualValue=result["ActualValue"]
        sActualValue=ActualValue.encode('ascii','ignore')
        Time=resultTime["TimeInstant"]["timePosition"]["Value"]
        sTime=Time.encode('ascii','ignore')
-       fileCsv.writerow([Serial,Device,sReadingType, sActualValue, sTime])
-    sys.exit
+       fileCsv.writerow([Serial,Device,ReadingType, sActualValue, sTime])
+    lock.acquire()
+    ThreadCount = ThreadCount-1
+    lock.release()
+
     return
 
 
@@ -70,6 +78,7 @@ def TimeLine(Serial,Code,BeginTime,EndTime,sObservableProperty):
 url = "http://grow-beta-api.hydronet.com/api/service/sos?service=SOS&request=getcapabilities&Version=2.0.0&ResponseFormat=application/JSON"
 headers = {"Authorization": "Bearer {0}".format(AuthCode)}
 payload = json.dumps({})
+threads = []
 
 response = requests.get(url, auth=HTTPBasicAuth('.\GROW_HL', '321Demo'))
 # exit if status code is not ok
@@ -83,17 +92,12 @@ jResp = response.json()
 
 contents=jResp["Contents"]
 #print json.dumps(contents, indent=4,sort_keys=True)
-
 CContents=contents["Contents"]
 #print json.dumps(CContents, indent=4,sort_keys=True)
-
-
 offering=CContents["offering"]
 #print json.dumps(offering, indent=4,sort_keys=True)
-
-
-
 #print ("Serial,Longitude,Latitude,Type")
+
 for key in offering:
     AbstractOffering=key["AbstractOffering"]
     #print(json.dumps(AbstractOffering, indent=4,sort_keys=True))
@@ -127,6 +131,24 @@ for key in offering:
        SensorType="Flower Power"
     BeginTime=AbstractOffering["resultTime"]["TimePeriod"]["Item"]["Value"]
     EndTime=AbstractOffering["resultTime"]["TimePeriod"]["Item1"]["Value"]
-    TimeLine(Serial,Code,BeginTime,EndTime,sObservableProperty)
-    print("{0},{1},{2},{3},{4},{5},{6},{7}".format(Serial,Lat,Long,Type,SensorType,Code,BeginTime,EndTime))
+
+    while (ThreadCount > 20):
+       sleep(5)
+       Locked+=1
+       if Locked > 30:
+          print("{0},{1}".format(ThreadCount,Locked))
+          sys.exit()
+    Locked=0
+
+
+    t = threading.Thread(target=TimeLine, args=(Serial,Code,BeginTime,EndTime,sObservableProperty,))
+    threads.append(t)
+    t.start()
+    ThreadCount=ThreadCount+1
+
+
+
+    #TimeLine(Serial,Code,BeginTime,EndTime,sObservableProperty)
+    AllCsv.writerow([Serial,Lat,Long,Type,SensorType,Code,BeginTime,EndTime])
+    #print("{0},{1},{2},{3},{4},{5},{6},{7}".format(Serial,Lat,Long,Type,SensorType,Code,BeginTime,EndTime))
 sys.exit()
